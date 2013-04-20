@@ -1,9 +1,10 @@
 package harvest
 
 import (
+	"appengine"
 	"net/http"
 )
 
-func Harvest(w http.ResponseWriter, r *http.Request) {
+func Harvest(c appengine.Context, w http.ResponseWriter, r *http.Request) {
 
 }
