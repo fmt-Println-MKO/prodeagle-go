@@ -8,6 +8,7 @@ import (
 	"appengine/user"
 	"fmt"
 	"net/http"
+	"prodeagle/counter"
 	"prodeagle/harvest"
 	"strings"
 	"time"
@@ -16,6 +17,8 @@ import (
 const twoDays time.Duration = time.Hour * 24 * 2
 
 func init() {
+	//TODO remove test later
+	http.HandleFunc("/prodeagle/testing", testCounter)
 	http.HandleFunc("/prodeagle/", dispatch)
 }
 
@@ -88,7 +91,7 @@ func getAuthToken(appId *string, c appengine.Context, r *http.Request) (token st
 		token = string(cache.Value)
 		return
 	}
-	key := datastore.NewKey(c, "prodeagle", "master", 0, nil)
+	key := datastore.NewKey(c, "prodeagle_key", "master", 0, nil)
 	err = datastore.Get(c, key, &token)
 	if err == nil {
 		putTokenToMemCache(token, c)
@@ -116,4 +119,11 @@ func putTokenToMemCache(token string, c appengine.Context) {
 		c.Errorf("putTokenToMemCache - memcache.Set(%#v) %s ", token, err)
 		//http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+//TODO remove test later
+func testCounter(w http.ResponseWriter, r *http.Request) {
+	c := appengine.NewContext(r)
+	counter.Incr(c, "first")
+	fmt.Fprint(w, "counter written")
 }
