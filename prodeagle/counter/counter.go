@@ -5,11 +5,12 @@ import (
 	"appengine/datastore"
 	"appengine/memcache"
 	"encoding/json"
+	//"strconv"
 	"time"
 )
 
 type entity struct {
-	value []string
+	Value []string
 }
 
 var counters = make([]string, 0, 50)
@@ -41,7 +42,7 @@ func checkCounter(c appengine.Context, name string) {
 			if err != nil {
 				c.Errorf("load counters - datastore.Get(%#v) %s ", key, err)
 			} else {
-				counters = en.value
+				counters = en.Value
 			}
 		}
 	}
@@ -62,8 +63,9 @@ func checkCounter(c appengine.Context, name string) {
 	k := datastore.NewKey(c, counters_name, "names", 0, nil)
 
 	en := new(entity)
-	en.value = counters
+	en.Value = counters
 	_, dserr := datastore.Put(c, k, en)
+	c.Infof("put counter names to Datastore")
 	if dserr != nil {
 		c.Errorf("save counters - datastore.Put(%#v) %s ", en, dserr)
 	}
@@ -92,21 +94,31 @@ type Batch struct {
 	c      appengine.Context
 }
 
-func NewBatch(c appengine.Context) Batch {
-	return Batch{make(map[string]int64), c}
+func NewBatch(c appengine.Context) *Batch {
+	return &Batch{make(map[string]int64), c}
 }
 
 func (b *Batch) Incr(name string) {
-	b.IncrDelta(name, 1)
+	if nil != b {
+		b.IncrDelta(name, 1)
+	}
 }
 
 func (b *Batch) IncrDelta(name string, value int64) {
-	checkCounter(b.c, name)
-	b.counts[name] = b.counts[name] + 1
+	if nil != b {
+		checkCounter(b.c, name)
+		//b.c.Infof("counter " + strconv.FormatInt(b.counts[name], 10))
+		b.counts[name] = b.counts[name] + 1
+		//b.c.Infof("counter " + strconv.FormatInt(b.counts[name], 10))
+	}
 }
 
 func (b *Batch) Commit() {
-	for n, v := range b.counts {
-		_, _ = memcache.Increment(b.c, counter_name_prefix+n, v, 0)
+	if nil != b {
+		for n, v := range b.counts {
+			//b.c.Infof("batch counter " + n + " - " + strconv.FormatInt(v, 10))
+			_, _ = memcache.Increment(b.c, counter_name_prefix+n, v, 0)
+		}
+		b.counts = make(map[string]int64)
 	}
 }

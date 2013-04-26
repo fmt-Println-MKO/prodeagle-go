@@ -18,7 +18,9 @@ const twoDays time.Duration = time.Hour * 24 * 2
 
 func init() {
 	//TODO remove test later
-	http.HandleFunc("/prodeagle/testing", testCounter)
+	http.HandleFunc("/prodeagle/testing/batch/commit/", testComitBatchCounter)
+	http.HandleFunc("/prodeagle/testing/batch/", testBatchCounter)
+	http.HandleFunc("/prodeagle/testing/", testCounter)
 	http.HandleFunc("/prodeagle/", dispatch)
 }
 
@@ -124,6 +126,26 @@ func putTokenToMemCache(token string, c appengine.Context) {
 //TODO remove test later
 func testCounter(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
-	counter.Incr(c, "first")
+	name := r.FormValue("name")
+	counter.Incr(c, name)
 	fmt.Fprint(w, "counter written")
+}
+
+var b *counter.Batch
+
+//TODO remove test later
+func testBatchCounter(w http.ResponseWriter, r *http.Request) {
+	c := appengine.NewContext(r)
+	name := r.FormValue("name")
+	if nil == b {
+		b = counter.NewBatch(c)
+	}
+	b.Incr(name)
+	fmt.Fprint(w, "batch counter written")
+}
+
+//TODO remove test later
+func testComitBatchCounter(w http.ResponseWriter, r *http.Request) {
+	b.Commit()
+	fmt.Fprint(w, "batch counter commited written")
 }
