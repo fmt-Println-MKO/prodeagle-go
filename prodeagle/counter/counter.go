@@ -4,80 +4,160 @@ import (
 	"appengine"
 	"appengine/datastore"
 	"appengine/memcache"
-	"encoding/json"
-	//"strconv"
+	"strconv"
 	"time"
 )
 
-type entity struct {
-	Value []string
+type counterNameShard struct {
+	Names     []string
+	Timestamp time.Time
 }
 
-var counters = make([]string, 0, 50)
+var allcounters = make([]string, 0, 50)
+var lastUpdate time.Time
+
+var lastShard int64 = 0
 
 const (
-	counters_name                     = "prodeagle_counters"
-	counter_name_prefix               = "prodeagle_counter_"
-	oneWeek             time.Duration = time.Hour * 24 * 7
+	counters_name               = "CounterNamesShard"
+	oneWeek       time.Duration = time.Hour * 24 * 7
+	sixtySeconds  time.Duration = time.Second * -60
+	add_success                 = 1
+	add_full                    = 2
+	add_fail                    = 3
+	namespace                   = "prodeagle"
 )
 
-func checkCounter(c appengine.Context, name string) {
-	if len(counters) == 0 {
-		cache, err := memcache.Get(c, counters_name)
-		if err != nil && err != memcache.ErrCacheMiss {
-			c.Errorf("read counter names - memcache.Get() %s ", err)
-
-		}
-		if err == nil {
-			c.Infof("read counter names - memcache hit")
-			err := json.Unmarshal(cache.Value, &counters)
-			if err != nil {
-				c.Errorf("unmarshal counters - json.Unmarshal() %s ", err)
+func contains(slice []string) func(elm string) bool {
+	return func(elm string) bool {
+		for _, e := range slice {
+			if e == elm {
+				return true
 			}
 		}
-		if err == memcache.ErrCacheMiss {
-			var en entity
-			key := datastore.NewKey(c, counters_name, "names", 0, nil)
-			err := datastore.Get(c, key, &en)
+		return false
+	}
+}
+
+func maxInt(a, b int64) int64 {
+	if a < b {
+		return b
+	}
+	return a
+}
+
+func getAllCounterNames(c appengine.Context) []string {
+	counternames := make([]string, 0, 50)
+	_, err := memcache.JSON.Get(c, counters_name, &counternames)
+	if err != nil && err != memcache.ErrCacheMiss {
+		c.Errorf("read counter names - memcache.Get() %s ", err)
+	}
+	c.Infof("read names from cache %#v", counternames)
+
+	if err == memcache.ErrCacheMiss {
+		q := datastore.NewQuery(counters_name)
+		if !lastUpdate.IsZero() {
+			q = q.Filter("Timestamp >=", lastUpdate.Add(sixtySeconds))
+		}
+		for t := q.Run(c); ; {
+			var cns counterNameShard
+			k, err := t.Next(&cns)
+			c.Infof("read cns %#v", cns)
+			if err == datastore.Done {
+				break
+			}
 			if err != nil {
-				c.Errorf("load counters - datastore.Get(%#v) %s ", key, err)
-			} else {
-				counters = en.Value
+				c.Errorf("load counters - datastore.QueryRun(%#v) %s ", q, err)
+			}
+			counternames = append(counternames, cns.Names...)
+			lastShard = maxInt(lastShard, k.IntID())
+			lastUpdate = time.Now()
+		}
+	}
+	c.Infof("read all names  %#v", counternames)
+	return counternames
+}
+
+func createCounterNamesShardIfNew(c appengine.Context, shard int64) {
+	key := datastore.NewKey(c, counters_name, "", shard, nil)
+	cns := new(counterNameShard)
+
+	err := datastore.Get(c, key, cns)
+	if err == datastore.ErrNoSuchEntity {
+		cns.Timestamp = time.Now()
+		_, err := datastore.Put(c, key, cns)
+		c.Infof("init new counter names to Datastore")
+		if err != nil {
+			c.Errorf("init new counters - datastore.Put(%#v) %s ", cns, err)
+		}
+	}
+}
+
+func addCounterNames(c appengine.Context, names []string) int {
+
+	key := datastore.NewKey(c, counters_name, "", lastShard, nil)
+	var cns counterNameShard
+	counters := make([]string, 0, 50)
+	result := add_fail
+	err := datastore.RunInTransaction(c, func(c appengine.Context) error {
+		err := datastore.Get(c, key, &cns)
+		if err != nil && err != datastore.ErrNoSuchEntity {
+			c.Errorf("load counters - datastore.Get(%#v) %s ", key, err)
+			return err
+		} else {
+			counters = cns.Names
+			contain := contains(counters)
+			for _, n := range names {
+				if !contain(n) {
+					counters = append(counters, n)
+				}
+			}
+			cns.Names = counters
+			cns.Timestamp = time.Now()
+			_, err = datastore.Put(c, key, &cns)
+			c.Infof("put counter names to Datastore")
+			if err != nil {
+				if len(names) == len(cns.Names) {
+					c.Errorf("save counters - datastore.Put(%#v) %s ", cns, err)
+					return err
+				}
+				result = add_full
+				return err
 			}
 		}
-	}
-	for _, c := range counters {
-		if c == name {
-			return
-		}
-	}
-
-	counters = append(counters, name)
-
-	ba, err := json.Marshal(counters)
+		result = add_success
+		return err
+	}, nil)
 	if err != nil {
-		c.Errorf("marshal counters - json.Marshal(%#v) %s ", counters, err)
+		if result == add_full {
+			lastShard++
+			createCounterNamesShardIfNew(c, lastShard)
+			addCounterNames(c, names)
+		} else {
+			c.Errorf("Transaction failed: %v , will try to write counter names next time", err)
+			return result
+		}
 
+	} else {
+		c.Infof("counter names successfull written")
 	}
 
-	k := datastore.NewKey(c, counters_name, "names", 0, nil)
-
-	en := new(entity)
-	en.Value = counters
-	_, dserr := datastore.Put(c, k, en)
-	c.Infof("put counter names to Datastore")
-	if dserr != nil {
-		c.Errorf("save counters - datastore.Put(%#v) %s ", en, dserr)
-	}
 	counterscache := &memcache.Item{
 		Key:        counters_name,
-		Value:      ba,
+		Object:     counters,
 		Expiration: oneWeek,
 	}
 	c.Infof("put counter names to MemCache")
-	if err := memcache.Set(c, counterscache); err != nil {
+	if err := memcache.JSON.Set(c, counterscache); err != nil {
 		c.Errorf("put counter names to MemCache - memcache.Set(%#v) %s ", counters, err)
 	}
+	return result
+}
+
+func calcMinute() string {
+	epoch := time.Now().Unix()
+	minute := epoch - (epoch % 60)
+	return strconv.FormatInt(minute, 10)
 }
 
 func Incr(c appengine.Context, name string) {
@@ -85,8 +165,7 @@ func Incr(c appengine.Context, name string) {
 }
 
 func IncrDelta(c appengine.Context, name string, value int64) {
-	checkCounter(c, name)
-	_, _ = memcache.Increment(c, counter_name_prefix+name, value, 0)
+	incrBatch(c, map[string]int64{name: value})
 }
 
 type Batch struct {
@@ -106,19 +185,50 @@ func (b *Batch) Incr(name string) {
 
 func (b *Batch) IncrDelta(name string, value int64) {
 	if nil != b {
-		checkCounter(b.c, name)
-		//b.c.Infof("counter " + strconv.FormatInt(b.counts[name], 10))
 		b.counts[name] = b.counts[name] + 1
-		//b.c.Infof("counter " + strconv.FormatInt(b.counts[name], 10))
 	}
 }
 
 func (b *Batch) Commit() {
 	if nil != b {
-		for n, v := range b.counts {
-			//b.c.Infof("batch counter " + n + " - " + strconv.FormatInt(v, 10))
-			_, _ = memcache.Increment(b.c, counter_name_prefix+n, v, 0)
-		}
+		incrBatch(b.c, b.counts)
 		b.counts = make(map[string]int64)
+	}
+}
+
+func incrBatch(dc appengine.Context, counters map[string]int64) {
+	c, _ := appengine.Namespace(dc, namespace)
+	minute := calcMinute()
+	newCounters := make([]string, 0, 10)
+	for n, v := range counters {
+		newValue, _ := memcache.Increment(c, minute+"_"+n, v, 0)
+		c.Infof("written counter %v with: %v", minute+"_"+n, v)
+		if v == int64(newValue) {
+			c.Infof("new counter %#v", n)
+			newCounters = append(newCounters, n)
+		}
+	}
+	if len(newCounters) > 0 {
+		allcounters = getAllCounterNames(c)
+
+		var newCounterNames = make([]string, 0, 5)
+
+		contain := contains(allcounters)
+		for _, n := range newCounters {
+			c.Infof("check new counter %#v , %#v", n, allcounters)
+			if !contain(n) {
+				c.Infof("check new counter %#v , %#v", n, allcounters)
+				newCounterNames = append(newCounterNames, n)
+			}
+		}
+
+		if len(newCounterNames) > 0 {
+			if lastShard == 0 {
+				createCounterNamesShardIfNew(c, 1)
+				lastShard = 1
+			}
+			c.Infof("adding new counters %#v ", newCounterNames)
+			addCounterNames(c, newCounterNames)
+		}
 	}
 }
