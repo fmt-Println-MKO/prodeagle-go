@@ -1,4 +1,4 @@
-package counter
+package prodeagle
 
 import (
 	"appengine"

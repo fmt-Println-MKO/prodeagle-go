@@ -8,8 +8,6 @@ import (
 	"appengine/user"
 	"fmt"
 	"net/http"
-	"prodeagle/counter"
-	"prodeagle/harvest"
 	"strings"
 	"time"
 )
@@ -28,7 +26,7 @@ func dispatch(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
 	prodcall := r.FormValue("production_call")
 	if prodcall != "" {
-		harvest.Harvest(c, w, r)
+		Harvest(w, r)
 		return
 	}
 	admin := r.FormValue("administrator")
@@ -127,18 +125,19 @@ func putTokenToMemCache(token string, c appengine.Context) {
 func testCounter(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
 	name := r.FormValue("name")
-	counter.Incr(c, name)
+	//IncrDelta(c, name, 5)
+	Incr(c, name)
 	fmt.Fprint(w, "counter written")
 }
 
-var b *counter.Batch
+var b *Batch
 
 //TODO remove test later
 func testBatchCounter(w http.ResponseWriter, r *http.Request) {
 	c := appengine.NewContext(r)
 	name := r.FormValue("name")
 	if nil == b {
-		b = counter.NewBatch(c)
+		b = NewBatch(c)
 	}
 	b.Incr(name)
 	fmt.Fprint(w, "batch counter written")
