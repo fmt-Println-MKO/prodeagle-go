@@ -4,7 +4,7 @@ import (
 	"appengine"
 	"appengine/memcache"
 	"bytes"
-	//"encoding/binary"
+	"encoding/binary"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -32,21 +32,24 @@ import (
 **/
 
 type counterHarvest struct {
-	All_data_inaccurate bool
-	Ms_of_data_lost     int64
-	Time                int64
-	Version             string
-	Counters            map[string]map[string]int64
+	All_data_inaccurate bool                        `json:"all_data_inaccurate"`
+	Ms_of_data_lost     int64                       `json:"ms_of_data_lost"`
+	Time                int64                       `json:"time"`
+	Version             string                      `json:"version"`
+	Counters            map[string]map[string]int64 `json:"counters"`
 }
 
 const (
-	max_look_back_time int64  = 1000 * 60 * 2 //1000 * 60 * 60 = 1h
-	max_clock_skew     int64  = 60
-	min_slot_size      int64  = 60
-	sep                string = "_"
+	max_look_back_time  int64  = 1000 * 60 * 2 //1000 * 60 * 60 = 1h
+	max_clock_skew      int64  = 60
+	min_slot_size       int64  = 60
+	sep                 string = "_"
+	version             string = "1.0"
+	max_memcache_server int    = 1024
 )
 
 func Harvest(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now().Unix()
 	dc := appengine.NewContext(r)
 	c, _ := appengine.Namespace(dc, namespace)
 	sLastHarvestTime := r.FormValue("last_time")
@@ -69,7 +72,7 @@ func Harvest(w http.ResponseWriter, r *http.Request) {
 	c.Infof("slot is: " + strconv.FormatInt(slot, 10))
 	for slot <= currentTime {
 		sslot := strconv.FormatInt(slot, 10)
-		c.Infof("sslot is: " + sslot)
+		//c.Infof("sslot is: " + sslot)
 		items, _ := memcache.GetMulti(c, cmNames(sslot))
 		for key, item := range items {
 			buf := bytes.NewBuffer(item.Value)
@@ -78,14 +81,44 @@ func Harvest(w http.ResponseWriter, r *http.Request) {
 		}
 		slot = slot + min_slot_size
 	}
-
-	b, err := json.Marshal(counters)
+	timelost := time.Now().Unix() - startTime
+	harvest := counterHarvest{Counters: counters, Ms_of_data_lost: timelost, Time: currentTime, Version: version}
+	b, err := json.Marshal(harvest)
 	if err != nil {
-		c.Errorf("currentAppointments - json.Marshal(%#v) %s ", counters, err)
+		c.Errorf("Harvest - json.Marshal(%#v) %s ", counters, err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	val := strconv.Itoa(readFlushChecks(c, lastHarvestTime))
+	c.Infof("flushes: " + val)
 	w.Write(b)
+}
+
+func writeFlushChecks(c appengine.Context, currentTime int64) {
+	items := make([]*memcache.Item, max_memcache_server)
+	for i := range items {
+		key := strconv.Itoa(i) + sep + strconv.FormatInt(currentTime, 10)
+		value := make([]byte, 20, 50)
+		binary.PutVarint(value, currentTime)
+		items[i] = &memcache.Item{
+			Key:   key,
+			Value: value,
+		}
+	}
+	memcache.SetMulti(c, items)
+}
+
+func readFlushChecks(c appengine.Context, lastHarvestTime int64) int {
+	keys := make([]string, max_memcache_server)
+	for i := range keys {
+		keys[i] = strconv.Itoa(i) + sep + strconv.FormatInt(lastHarvestTime, 10)
+	}
+	items, _ := memcache.GetMulti(c, keys)
+	return len(items)
+}
+
+func flushMemCache(c appengine.Context) {
+	memcache.Flush(c)
 }
 
 func createMemCacheNames(cnames []string) func(slot string) []string {
