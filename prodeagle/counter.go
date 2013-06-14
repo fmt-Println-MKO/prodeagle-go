@@ -9,12 +9,10 @@ import (
 )
 
 type counterNameShard struct {
-	Names     []string
-	Timestamp time.Time
+	Names []string
 }
 
 var allcounters = make([]string, 0, 50)
-var lastUpdate time.Time
 
 var lastShard int64 = 0
 
@@ -61,10 +59,6 @@ func getAllCounterNames(c appengine.Context) []string {
 
 	if err == memcache.ErrCacheMiss {
 		q := datastore.NewQuery(counters_name)
-		//if it was already read from DS, just load the changes since last read per app instance
-		if !lastUpdate.IsZero() {
-			q = q.Filter("Timestamp >=", lastUpdate.Add(sixtySeconds))
-		}
 		for t := q.Run(c); ; {
 			var cns counterNameShard
 			k, err := t.Next(&cns)
@@ -77,8 +71,16 @@ func getAllCounterNames(c appengine.Context) []string {
 			}
 			counternames = append(counternames, cns.Names...)
 			lastShard = maxInt(lastShard, k.IntID())
-			//only update lastUpdate timestamp if there was at least 1 entry
-			lastUpdate = time.Now()
+		}
+		// add counter names to cache for faster read for next time check if there are new once
+		counterscache := &memcache.Item{
+			Key:        counters_name,
+			Object:     counternames,
+			Expiration: oneWeek,
+		}
+		c.Infof("put counter names to MemCache")
+		if err := memcache.JSON.Set(c, counterscache); err != nil {
+			c.Errorf("put counter names to MemCache - memcache.Set(%#v) %s ", counternames, err)
 		}
 	}
 	c.Infof("read all names  %#v", counternames)
@@ -94,7 +96,6 @@ func createCounterNamesShardIfNew(c appengine.Context, shard int64) {
 
 	err := datastore.Get(c, key, cns)
 	if err == datastore.ErrNoSuchEntity {
-		cns.Timestamp = time.Now()
 		_, err := datastore.Put(c, key, cns)
 		c.Infof("init new counter names to Datastore")
 		if err != nil {
@@ -126,7 +127,6 @@ func addCounterNames(c appengine.Context, names []string) int {
 				}
 			}
 			cns.Names = counters
-			cns.Timestamp = time.Now()
 			_, err = datastore.Put(c, key, &cns)
 			c.Infof("put counter names to Datastore")
 			if err != nil {
@@ -171,10 +171,8 @@ func addCounterNames(c appengine.Context, names []string) int {
 }
 
 // calc current minute
-func calcMinute() string {
-	epoch := time.Now().Unix()
-	minute := epoch - (epoch % 60)
-	return strconv.FormatInt(minute, 10)
+func calcMinute(epoch int64) int64 {
+	return epoch - (epoch % 60)
 }
 
 //increments the counter *name" by one
@@ -225,7 +223,7 @@ func (b *Batch) Commit() {
 //for faster reading /writing counter values are stored in memcached
 func incrBatch(dc appengine.Context, counters map[string]int64) {
 	c, _ := appengine.Namespace(dc, namespace)
-	minute := calcMinute()
+	minute := strconv.FormatInt(calcMinute(time.Now().Unix()), 10)
 	newCounters := make([]string, 0, 10)
 	for n, v := range counters {
 		newValue, _ := memcache.Increment(c, minute+"_"+n, v, 0)
