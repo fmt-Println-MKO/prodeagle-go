@@ -37,6 +37,7 @@ func harvest(c appengine.Context, sLastHarvestTime string, prodCall bool) []byte
 	lastHarvestTime := time.Now().Unix()
 	if sLastHarvestTime != "" {
 		lastHarvestTime, _ = strconv.ParseInt(sLastHarvestTime, 10, 64)
+	} else {
 		lastHarvestTime = lastHarvestTime - max_look_back_time
 	}
 	currentTime := calcMinute(time.Now().Unix())
@@ -51,9 +52,11 @@ func harvest(c appengine.Context, sLastHarvestTime string, prodCall bool) []byte
 	if prodCall {
 		keys = make([]string, len(counters_name)*2, len(counters_name)*3)
 	}
-	c.Infof("lastharvesttime is: %v", lastHarvestTime)
-	c.Infof("currenttime is: %v", currentTime)
-	c.Infof("slot is: %v", slot)
+	if IsDebugEnabled {
+		c.Debugf("harvest - lastHarvestTime is: %v", lastHarvestTime)
+		c.Debugf("harvest - currentTime is: %v", currentTime)
+		c.Debugf("harvest - first slot is: %v", slot)
+	}
 	for slot <= currentTime {
 		sslot := strconv.FormatInt(slot, 10)
 		items, _ := memcache.GetMulti(c, cmNames(sslot))
@@ -78,7 +81,9 @@ func harvest(c appengine.Context, sLastHarvestTime string, prodCall bool) []byte
 	}
 	if prodCall {
 		//delete harvested counters
-		c.Infof("deleting all counters")
+		if IsDebugEnabled {
+			c.Debugf("harvest - flushing all counters")
+		}
 		memcache.DeleteMulti(c, keys)
 	}
 	return b

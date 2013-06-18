@@ -1,5 +1,22 @@
 package prodeagle
 
+// prodegale library for appengine apps 
+//
+// just count what ever you wanted to get count and watch your app with prodegle
+// see documentation on http://godoc.org/github.com/fmt-Println-MKO/prodeagle-go/prodeagle
+//
+// short example how to use:
+// add a url for the prodeagle api:
+// http.HandleFunc("/prodeagle/", prodeagle.Dispatch)
+// just count any counter like this:
+
+// c is your appengine.Context
+// name is the name of counter you want to inceremt by 1
+// prodeagle.Incr(c, name) 
+//
+// read the full example on 
+// https://github.com/fmt-Println-MKO/prodeagle-go
+
 import (
 	"appengine"
 	"appengine/datastore"
@@ -18,6 +35,10 @@ const twoDays time.Duration = time.Hour * 24 * 2
 const prodeagleUrl string = "https://prod-eagle.appspot.com/auth/?site=%v.appspot.com&auth=%v&%v=%v"
 const prodeagleAuthUrl string = "https://prod-eagle.appspot.com/auth/?site=%v.appspot.com&auth=%v"
 
+// if it is true, internal api will write debug logs, default is false
+var IsDebugEnabled bool
+
+// handels all prodealge request, configure your handler to use this function on request to http(s)://YOUR.APP.URL/prodeagle/
 func Dispatch(w http.ResponseWriter, r *http.Request) {
 
 	dc := appengine.NewContext(r)
@@ -50,7 +71,9 @@ func Dispatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//if prodeagle or admin call, do harvest counters
-	c.Debugf("admin: %v prod: %v", isadmin, prod)
+	if IsDebugEnabled {
+		c.Debugf("Dispatch - is Admin req: %v is ProdEagle req: %v", isadmin, prod)
+	}
 	if isadmin || prod {
 		delCounter := r.FormValue("delete_counter")
 		if delCounter != "" {
@@ -65,7 +88,7 @@ func Dispatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	//note a unknown request
-	c.Warningf("Dispatch -unknown request %s ", r.URL)
+	c.Warningf("Dispatch - unknown request %s ", r.URL)
 }
 
 //a prodeagle request will send a auth parameter to verify
@@ -143,22 +166,28 @@ func getAuth(appId *string, updateAuth string, c appengine.Context, r *http.Requ
 			auth = prodauth.Secret
 		}
 	}
-	c.Debugf("getAuth - auth: %v updateAuth: %v", auth, updateAuth)
+	if IsDebugEnabled {
+		c.Debugf("getAuth - auth: %v updateAuth: %v", auth, updateAuth)
+	}
 	if updateAuth != "" && (auth == "" || auth != updateAuth) {
 		client := urlfetch.Client(c)
 		//make verify call to prodeagle
 		url := fmt.Sprintf(prodeagleAuthUrl, *appId, updateAuth)
 		resp, ferr := client.Get(url)
 		if ferr != nil {
-			c.Errorf("getAuth error %v", ferr)
+			c.Errorf("getAuth - error %v", ferr)
 			return ""
 		}
 		//check verification result
-		c.Debugf("getAuth - status: %v", resp.Status)
+		if IsDebugEnabled {
+			c.Debugf("getAuth - status: %v", resp.Status)
+		}
 		if resp.Status == "200 OK" {
 			defer resp.Body.Close()
 			body, _ := ioutil.ReadAll(resp.Body)
-			c.Debugf("getAuth - body: %v", string(body))
+			if IsDebugEnabled {
+				c.Debugf("getAuth - body: %v", string(body))
+			}
 			if string(body) == "OK" {
 				prodauth.Secret = updateAuth
 				storeAuth(*prodauth, c)
@@ -176,7 +205,9 @@ func getAuth(appId *string, updateAuth string, c appengine.Context, r *http.Requ
 func storeAuth(auth prodeagleAuth, c appengine.Context) {
 	key := datastore.NewKey(c, "prodeagle_key", authKeyId, 0, nil)
 	_, err := datastore.Put(c, key, &auth)
-	c.Debugf("storeAuth - write to datastore")
+	if IsDebugEnabled {
+		c.Debugf("storeAuth - write to datastore")
+	}
 	if err != nil {
 		c.Errorf("storeAuth - datastore.Put(%#v) %s ", auth, err)
 		return
@@ -186,7 +217,9 @@ func storeAuth(auth prodeagleAuth, c appengine.Context) {
 		Value:      []byte(auth.Secret),
 		Expiration: twoDays,
 	}
-	c.Debugf("storeAuth - write to memcache")
+	if IsDebugEnabled {
+		c.Debugf("storeAuth - write to memcache")
+	}
 	if err := memcache.Set(c, cache); err != nil {
 		c.Errorf("storeAuth - memcache.Set(%#v) %s ", auth, err)
 	}

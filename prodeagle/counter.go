@@ -52,18 +52,22 @@ func getAllCounterNamesShard(c appengine.Context) []counterNameShard {
 	for t := q.Run(c); ; {
 		var cns counterNameShard
 		k, err := t.Next(&cns)
-		c.Infof("read cns %#v", cns)
+		if IsDebugEnabled {
+			c.Debugf("getAllCounterNamesShard - read cns %#v", cns)
+		}
 		if err == datastore.Done {
 			break
 		}
 		if err != nil {
-			c.Errorf("load counters - datastore.QueryRun(%#v) %s ", q, err)
+			c.Errorf("getAllCounterNamesShard - load counters - datastore.QueryRun(%#v) %s ", q, err)
 		}
 		//lastShard = maxInt(lastShard, k.IntID())
 		cns.ShardId = k.IntID()
 		counternamesShard = append(counternamesShard, cns)
 	}
-	c.Infof("read all names  %#v", counternamesShard)
+	if IsDebugEnabled {
+		c.Debugf("getAllCounterNamesShard - read all names  %#v", counternamesShard)
+	}
 	return counternamesShard
 }
 
@@ -74,9 +78,11 @@ func getAllCounterNames(c appengine.Context) []string {
 	counternames := make([]string, 0, 50)
 	_, err := memcache.JSON.Get(c, counters_name, &counternames)
 	if err != nil && err != memcache.ErrCacheMiss {
-		c.Errorf("read counter names - memcache.Get() %s ", err)
+		c.Errorf("getAllCounterNames - read counter names - memcache.Get() %s ", err)
 	}
-	c.Infof("read names from cache %#v", counternames)
+	if IsDebugEnabled {
+		c.Debugf("getAllCounterNames - read names from cache %#v", counternames)
+	}
 
 	if err == memcache.ErrCacheMiss {
 		for _, cns := range getAllCounterNamesShard(c) {
@@ -87,7 +93,9 @@ func getAllCounterNames(c appengine.Context) []string {
 		storeCounterNamesInMemcache(c, counternames)
 
 	}
-	c.Infof("read all names  %#v", counternames)
+	if IsDebugEnabled {
+		c.Debugf("getAllCounterNames - read all names  %#v", counternames)
+	}
 	return counternames
 }
 
@@ -97,9 +105,11 @@ func storeCounterNamesInMemcache(c appengine.Context, counternames []string) {
 		Object:     counternames,
 		Expiration: oneWeek,
 	}
-	c.Infof("put counter names to MemCache")
+	if IsDebugEnabled {
+		c.Debugf("storeCounterNamesInMemcache - put counter names to MemCache")
+	}
 	if err := memcache.JSON.Set(c, counterscache); err != nil {
-		c.Errorf("put counter names to MemCache - memcache.Set(%#v) %s ", counternames, err)
+		c.Errorf("storeCounterNamesInMemcache - put counter names to MemCache - memcache.Set(%#v) %s ", counternames, err)
 	}
 }
 
@@ -113,9 +123,11 @@ func createCounterNamesShardIfNew(c appengine.Context, shard int64) {
 	err := datastore.Get(c, key, cns)
 	if err == datastore.ErrNoSuchEntity {
 		_, err := datastore.Put(c, key, cns)
-		c.Infof("init new counter names to Datastore")
+		if IsDebugEnabled {
+			c.Debugf("createCounterNamesShardIfNew - init new counter names to Datastore")
+		}
 		if err != nil {
-			c.Errorf("init new counters - datastore.Put(%#v) %s ", cns, err)
+			c.Errorf("createCounterNamesShardIfNew - init new counters - datastore.Put(%#v) %s ", cns, err)
 		}
 	}
 }
@@ -132,7 +144,7 @@ func addCounterNames(c appengine.Context, names []string) int {
 		//read current shard to recheck of name is still new, (could be added by an other instance in the meanwhile)
 		err := datastore.Get(c, key, &cns)
 		if err != nil && err != datastore.ErrNoSuchEntity {
-			c.Errorf("load counters - datastore.Get(%#v) %s ", key, err)
+			c.Errorf("addCounterNames - load counterNamesShard - datastore.Get(%#v) %s ", key, err)
 			return err
 		} else {
 			counters = cns.Names
@@ -144,11 +156,13 @@ func addCounterNames(c appengine.Context, names []string) int {
 			}
 			cns.Names = counters
 			_, err = datastore.Put(c, key, &cns)
-			c.Infof("put counter names to Datastore")
+			if IsDebugEnabled {
+				c.Debugf("addCounterNames - put counterNamesShard to Datastore")
+			}
 			if err != nil {
 				// if lenght are equal it looks like a counting start, in case of errors there are no counters written, so no harvest possible
 				if len(names) == len(cns.Names) {
-					c.Errorf("save counters - datastore.Put(%#v) %s ", cns, err)
+					c.Errorf("addCounterNames - save counterNamesShard - datastore.Put(%#v) %s ", cns, err)
 					return err
 				}
 				// if there where allready counter names written before, maybe we reached the limit of appengine, in this case write new names to new CounterNamesShard
@@ -165,12 +179,14 @@ func addCounterNames(c appengine.Context, names []string) int {
 			createCounterNamesShardIfNew(c, lastShard)
 			addCounterNames(c, names)
 		} else {
-			c.Errorf("Transaction failed: %v , will try to write counter names next time", err)
+			c.Errorf("addCounterNames - Transaction failed: %v , will try to write counter names next time", err)
 			return result
 		}
 
 	} else {
-		c.Infof("counter names successfull written")
+		if IsDebugEnabled {
+			c.Debugf("addCounterNames - counter names successfull written")
+		}
 	}
 
 	// add new counter names to cache for faster read for next time check if there are new once
@@ -220,7 +236,9 @@ func deleteCounter(c appengine.Context, name string) {
 							newcns.Names, rem = remove(newcns.Names)(name)
 							if rem {
 								_, err = datastore.Put(c, key, &newcns)
-								c.Infof("deleteCounter - put new counterNamesShard to Datastore, removed counter: %v", name)
+								if IsDebugEnabled {
+									c.Debugf("deleteCounter - put new counterNamesShard to Datastore, removed counter: %v", name)
+								}
 								if err != nil {
 									c.Errorf("deleteCounter - update counterNamesShard - datastore.Put(%#v) %s ", newcns, err)
 									return err
@@ -292,10 +310,14 @@ func incrBatch(dc appengine.Context, counters map[string]int64) {
 	newCounters := make([]string, 0, 10)
 	for n, v := range counters {
 		newValue, _ := memcache.Increment(c, minute+"_"+n, v, 0)
-		c.Infof("written counter %v with: %v", minute+"_"+n, v)
+		if IsDebugEnabled {
+			c.Debugf("incrBatch - written counter %v with: %v", minute+"_"+n, v)
+		}
 		//if given counter delta is the same value as incremented value its possible a new counter
 		if v == int64(newValue) {
-			c.Infof("new counter %#v", n)
+			if IsDebugEnabled {
+				c.Debugf("incrBatch - new counter %#v", n)
+			}
 			newCounters = append(newCounters, n)
 		}
 	}
@@ -307,9 +329,13 @@ func incrBatch(dc appengine.Context, counters map[string]int64) {
 		// check which counters are realy new
 		contain := contains(allcounters)
 		for _, n := range newCounters {
-			c.Infof("check new counter %#v , %#v", n, allcounters)
+			if IsDebugEnabled {
+				c.Debugf("incrbatch - check if counter: %#v ,is in: %#v", n, allcounters)
+			}
 			if !contain(n) {
-				c.Infof("check new counter %#v , %#v", n, allcounters)
+				if IsDebugEnabled {
+					c.Debugf("incrBatch - preprare new counter: %#v ", n)
+				}
 				newCounterNames = append(newCounterNames, n)
 			}
 		}
@@ -320,7 +346,9 @@ func incrBatch(dc appengine.Context, counters map[string]int64) {
 				createCounterNamesShardIfNew(c, 1)
 				lastShard = 1
 			}
-			c.Infof("adding new counters %#v ", newCounterNames)
+			if IsDebugEnabled {
+				c.Debugf("incrBatch - adding all new counters: %#v ", newCounterNames)
+			}
 			addCounterNames(c, newCounterNames)
 		}
 	}

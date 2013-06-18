@@ -9,6 +9,7 @@ import (
 )
 
 func init() {
+	prodeagle.IsDebugEnabled = true
 	http.HandleFunc("/prodeagle/", prodeagle.Dispatch)
 	http.HandleFunc("/batch/commit/", testComitBatchCounter)
 	http.HandleFunc("/batch/", testBatchCounter)
