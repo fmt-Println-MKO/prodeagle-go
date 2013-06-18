@@ -1,4 +1,8 @@
 /*
+ Licensed: Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0)
+ http://creativecommons.org/licenses/by-sa/3.0/
+
+
  prodegale api library for appengine apps 
 
  just count what ever you wanted to get count and watch your app with http://www.prodeagle.com/
@@ -47,9 +51,6 @@ thats all
 */
 
 package prodeagle
-
-// Licensed: Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0)
-// http://creativecommons.org/licenses/by-sa/3.0/
 
 import (
 	"appengine"
