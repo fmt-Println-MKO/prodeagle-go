@@ -1,21 +1,22 @@
+/*
+ prodegale library for appengine apps 
+
+ just count what ever you wanted to get count and watch your app with prodegle
+ see documentation on http://godoc.org/github.com/fmt-Println-MKO/prodeagle-go/prodeagle
+
+ short example how to use:
+ add a url for the prodeagle api:
+ 	http.HandleFunc("/prodeagle/", prodeagle.Dispatch)
+ just count any counter like this:
+
+ c is your appengine.Context
+ name is the name of counter you want to inceremt by 1
+ 	prodeagle.Incr(c, name) 
+
+ read the full example on 
+ https://github.com/fmt-Println-MKO/prodeagle-go
+*/
 package prodeagle
-
-// prodegale library for appengine apps 
-//
-// just count what ever you wanted to get count and watch your app with prodegle
-// see documentation on http://godoc.org/github.com/fmt-Println-MKO/prodeagle-go/prodeagle
-//
-// short example how to use:
-// add a url for the prodeagle api:
-// http.HandleFunc("/prodeagle/", prodeagle.Dispatch)
-// just count any counter like this:
-
-// c is your appengine.Context
-// name is the name of counter you want to inceremt by 1
-// prodeagle.Incr(c, name) 
-//
-// read the full example on 
-// https://github.com/fmt-Println-MKO/prodeagle-go
 
 import (
 	"appengine"
