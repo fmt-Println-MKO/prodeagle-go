@@ -5,63 +5,10 @@ import (
 	"appengine/memcache"
 	"bytes"
 	"encoding/json"
-	//"net/http"
 	"strconv"
 	"strings"
 	"time"
 )
-
-/**
-{
-  "all_data_inaccurate": false, // I will explain this bellow
-  "counters": {                 // a dictionary of all counters
-    "foo": {                    // foo is the counter name
-      "1319752200": 3           // the first number is the epoch modulo 60 and
-                                // the second number is the delta of the counter
-    },
-    "bar": {                    // this is another counter...
-      "1319752140": 2           // which was incremented at two different minutes
-      "1319752200": 161
-    },
-  }, 
-  "ms_of_data_lost": 303,       // i will explain bellow
-  "time": 1319752200,           // the current time on the server modulo 60
-  "version": 1.0                // the version of the protocol. so far always 1.0
-}
-
-
-
-{
-	"all_data_inaccurate":false,
-	"ms_of_data_lost":1622,
-	"time":1371494040,
-	"version":"1.0",
-	"counters":{
-		"xydddssdfgd":{
-
-		},
-		"xydddssfhfghfgh":{
-
-		}
-	}
-}
-
-
-{
-	"all_data_inaccurate":false,
-	"counters":{
-		"xydddssdfgd":{
-			"1371494460":1
-		},
-		"xydddssfhfghfgh":{
-			"1371494460":2
-		}
-	},
-	"ms_of_data_lost":1060,
-	"time":1371494460,
-	"version":1}
-
-**/
 
 type counterHarvest struct {
 	All_data_inaccurate bool                        `json:"all_data_inaccurate"`
@@ -85,18 +32,16 @@ const (
 //if last_time is not set try to harvest counters from last hour
 func Harvest(c appengine.Context, sLastHarvestTime string, prodCall bool) []byte {
 	startTime := time.Now()
-	//dc := appengine.NewContext(r)
-	//c, _ := appengine.Namespace(dc, namespace)
 	//check if there could be lost counters since last harvest
 	all_data_inaccurate := wasDataLost(c, true)
-	//sLastHarvestTime := r.FormValue("last_time")
 	lastHarvestTime := time.Now().Unix()
 	if sLastHarvestTime != "" {
 		lastHarvestTime, _ = strconv.ParseInt(sLastHarvestTime, 10, 64)
+		lastHarvestTime = lastHarvestTime - max_look_back_time
 	}
 	currentTime := calcMinute(time.Now().Unix())
 	counterNames := getAllCounterNames(c)
-	slot := calcMinute(lastHarvestTime - max_look_back_time)
+	slot := calcMinute(lastHarvestTime)
 	counters := make(map[string]map[string]int64)
 	for _, name := range counterNames {
 		counters[name] = make(map[string]int64)
@@ -111,7 +56,7 @@ func Harvest(c appengine.Context, sLastHarvestTime string, prodCall bool) []byte
 	c.Infof("slot is: %v", slot)
 	for slot <= currentTime {
 		sslot := strconv.FormatInt(slot, 10)
-		c.Infof("sslot is: " + sslot)
+		//c.Infof("sslot is: " + sslot)
 		items, _ := memcache.GetMulti(c, cmNames(sslot))
 		for key, item := range items {
 			buf := bytes.NewBuffer(item.Value)
@@ -130,7 +75,6 @@ func Harvest(c appengine.Context, sLastHarvestTime string, prodCall bool) []byte
 	b, err := json.Marshal(harvest)
 	if err != nil {
 		c.Errorf("Harvest - json.Marshal(%#v) %s ", counters, err)
-		//http.Error(w, err.Error(), http.StatusInternalServerError)
 		return nil
 	}
 	if prodCall {
@@ -138,7 +82,6 @@ func Harvest(c appengine.Context, sLastHarvestTime string, prodCall bool) []byte
 		c.Infof("deleting all counters")
 		memcache.DeleteMulti(c, keys)
 	}
-	//w.Write(b)
 	return b
 }
 

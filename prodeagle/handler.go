@@ -32,18 +32,11 @@ func Dispatch(w http.ResponseWriter, r *http.Request) {
 	c, _ := appengine.Namespace(dc, namespace)
 
 	method := r.Method
-	c.Infof("method: %v", method)
-	for k, v := range r.Header {
-		c.Infof("header k: %v value: %v", k, v)
-	}
-
-	r.ParseForm()
-	for k, v := range r.Form {
-		c.Infof("form k: %v value: %v", k, v)
+	if method == "HEAD" {
+		return
 	}
 
 	appId := appengine.AppID(c)
-	c.Infof("appid: %v", appId)
 	if strings.Contains(appId, ":") {
 		appId = strings.Split(appId, ":")[1]
 	}
@@ -52,57 +45,26 @@ func Dispatch(w http.ResponseWriter, r *http.Request) {
 	viewer := r.FormValue("viewer")
 
 	if admin != "" || viewer != "" {
-		login(&appId, c, w, r)
+		addUser(&appId, c, w, r)
 		return
 	}
 
-	isadmin := isAdmin(c, w, r)
+	var isadmin bool
 	prod := isProdeagle(&appId, c, r)
-	c.Infof("admin: %v prod: %v", isadmin, prod)
+	if !prod {
+		isadmin = isAdmin(c, w, r)
+	}
+
+	c.Debugf("admin: %v prod: %v", isadmin, prod)
 	if isadmin || prod {
 		prodcall := r.FormValue("production_call")
-		//json := r.FormValue("json")
-		//isTestCall := json != ""
-		//if prodcall != "" || isTestCall {
-
-		//auth := r.FormValue("auth")
-		//if isTestCall || isAuthenticated(&appId, c, auth) {
-
 		sLastHarvestTime := r.FormValue("last_time")
 		isProdCall := prodcall == "1"
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Write(Harvest(c, sLastHarvestTime, isProdCall))
-
-		/*
-
-			if production_call or self.request.get("json"):
-			        self.response.headers['Content-Type'] = "text/plain; charset=utf-8"
-			        self.response.out.write(simplejson.dumps(result,
-			                                                 sort_keys=True, indent=2))
-			      else:
-			        slot = counter_names.getEpochRounded()
-			        for key in all_keys:
-			          self.addCounterToResult(key, slot, 0, result["counters"])
-			        self.response.out.write("<h3>Data since last export</h3>")
-			        self.response.out.write(
-			            "<a href='http://www.prodeagle.com'>Go to ProdEagle dashboard</a>")
-			        self.response.out.write(
-			            "<br><br><a href='%s'>Logout</a>" %
-			            users.create_logout_url(self.request.url))
-			        for counter in sorted(result["counters"].keys()):
-			          self.response.out.write("<br/><b>%s</b>: %d" %
-			              (counter, sum(result["counters"][counter].values())))
-		*/
-
 		return
-		//}
-		//}
 	}
-
-	c.Errorf("dispatch -unknown request %s ", r.URL)
-	http.Error(w, "unknown request", http.StatusBadRequest)
-	return
-
+	c.Errorf("Dispatch -unknown request %s ", r.URL)
 }
 
 func isProdeagle(appId *string, c appengine.Context, r *http.Request) bool {
@@ -112,12 +74,6 @@ func isProdeagle(appId *string, c appengine.Context, r *http.Request) bool {
 		if secret == auth {
 			return true
 		}
-	}
-	header := r.Header.Get("X-Appengine-Queuename")
-	header2 := r.Header.Get("X-Appengine-Inbound-Appid")
-	c.Infof("header is %v", header)
-	if header != "" || header2 != "" {
-		return true
 	}
 	return false
 }
@@ -136,38 +92,13 @@ func isAdmin(c appengine.Context, w http.ResponseWriter, r *http.Request) bool {
 	}
 	if u.Admin {
 		return true
-
 	}
 	url, _ := user.LogoutURL(c, r.URL.String())
 	fmt.Fprint(w, "Please login with an administrator account. <a href='%s'>Logout</a>", url)
 	return false
 }
 
-/*
-
-func isAuthenticated(appId *string, c appengine.Context, auth string) bool {
-	if auth == "" {
-		return false
-	}
-	c.Infof("appid: %v", appId)
-	client := urlfetch.Client(c)
-	resp, err := client.Get(fmt.Sprintf(prodeagleAuthUrl, appId, auth))
-	if err != nil {
-		return false
-	}
-
-	if resp.Status == "200" {
-		defer resp.Body.Close()
-		body, _ := ioutil.ReadAll(resp.Body)
-		if string(body) == "OK" {
-			storeAuth(auth, c)
-			return true
-		}
-	}
-	return false
-}
-*/
-func login(appId *string, c appengine.Context, w http.ResponseWriter, r *http.Request) {
+func addUser(appId *string, c appengine.Context, w http.ResponseWriter, r *http.Request) {
 	if isAdmin(c, w, r) {
 		email := r.FormValue("administrator")
 		rtype := "administrator"
@@ -175,12 +106,11 @@ func login(appId *string, c appengine.Context, w http.ResponseWriter, r *http.Re
 			email = r.FormValue("viewer")
 			rtype = "viewer"
 		}
-		auth := getAuth(appId, "None", c, r)
+		auth := getAuth(appId, "", c, r)
 		if auth == "" {
 			fmt.Fprint(w, "ProdEagle hasn't set your secret yet. Please visit prodeagle.com and register your website.")
 			return
 		}
-
 		w.Header().Set("Location", fmt.Sprintf(prodeagleUrl, *appId, auth, rtype, email))
 		w.WriteHeader(http.StatusFound)
 		return
@@ -196,11 +126,8 @@ type prodeagleAuth struct {
 func getAuth(appId *string, updateAuth string, c appengine.Context, r *http.Request) string {
 	prodauth := new(prodeagleAuth)
 	var auth string
-	//updateAuth := "NONE"
-	c.Infof("auth - updateAuth: %v", updateAuth)
 	cache, err := memcache.Get(c, authKeyId)
 	if err == nil {
-		c.Infof("getAuthauth - memcache hit")
 		auth = string(cache.Value)
 	} else {
 		key := datastore.NewKey(c, "prodeagle_key", authKeyId, 0, nil)
@@ -209,32 +136,29 @@ func getAuth(appId *string, updateAuth string, c appengine.Context, r *http.Requ
 			auth = prodauth.Secret
 		}
 	}
-	c.Infof("auth - auth: %v", auth)
+	c.Debugf("getAuth - auth: %v updateAuth: %v", auth, updateAuth)
 	if updateAuth != "" && (auth == "" || auth != updateAuth) {
-
 		client := urlfetch.Client(c)
 		url := fmt.Sprintf(prodeagleAuthUrl, *appId, updateAuth)
-		c.Infof("auth - url: %v", url)
 		resp, ferr := client.Get(url)
 		if ferr != nil {
-			//http.Error(w, err.Error(), http.StatusInternalServerError)
-			c.Errorf("auth error %v", ferr)
+			c.Errorf("getAuth error %v", ferr)
 			return ""
 		}
-		c.Infof("auth - status: %v", resp.Status)
+		c.Debugf("getAuth - status: %v", resp.Status)
 		if resp.Status == "200 OK" {
 			defer resp.Body.Close()
 			body, _ := ioutil.ReadAll(resp.Body)
-			c.Infof("auth - body: %v", string(body))
-			//if string(body) == "OK" {
-			prodauth.Secret = updateAuth
-			storeAuth(*prodauth, c)
-			return updateAuth
-			//}
+			c.Debugf("getAuth - body: %v", string(body))
+			if string(body) == "OK" {
+				prodauth.Secret = updateAuth
+				storeAuth(*prodauth, c)
+				return updateAuth
+			}
 		}
-		if auth != "" {
-			return auth
-		}
+	}
+	if auth != "" {
+		return auth
 	}
 	return ""
 }
@@ -242,7 +166,7 @@ func getAuth(appId *string, updateAuth string, c appengine.Context, r *http.Requ
 func storeAuth(auth prodeagleAuth, c appengine.Context) {
 	key := datastore.NewKey(c, "prodeagle_key", authKeyId, 0, nil)
 	_, err := datastore.Put(c, key, &auth)
-	c.Infof("storeAuth - write to datastore")
+	c.Debugf("storeAuth - write to datastore")
 	if err != nil {
 		c.Errorf("storeAuth - datastore.Put(%#v) %s ", auth, err)
 		return
@@ -252,12 +176,10 @@ func storeAuth(auth prodeagleAuth, c appengine.Context) {
 		Value:      []byte(auth.Secret),
 		Expiration: twoDays,
 	}
-	c.Infof("storeAuth - write to memcache")
+	c.Debugf("storeAuth - write to memcache")
 	if err := memcache.Set(c, cache); err != nil {
 		c.Errorf("storeAuth - memcache.Set(%#v) %s ", auth, err)
-		//http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
-
 }
 
 //TODO remove test later
