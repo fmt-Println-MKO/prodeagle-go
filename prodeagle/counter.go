@@ -9,10 +9,9 @@ import (
 )
 
 type counterNameShard struct {
-	Names []string
+	Names   []string
+	ShardId int64
 }
-
-var allcounters = make([]string, 0, 50)
 
 var lastShard int64 = 0
 
@@ -46,6 +45,28 @@ func maxInt(a, b int64) int64 {
 	return a
 }
 
+//read all countersNameShards from db
+func getAllCounterNamesShard(c appengine.Context) []counterNameShard {
+	counternamesShard := make([]counterNameShard, 0, 50)
+	q := datastore.NewQuery(counters_name)
+	for t := q.Run(c); ; {
+		var cns counterNameShard
+		k, err := t.Next(&cns)
+		c.Infof("read cns %#v", cns)
+		if err == datastore.Done {
+			break
+		}
+		if err != nil {
+			c.Errorf("load counters - datastore.QueryRun(%#v) %s ", q, err)
+		}
+		//lastShard = maxInt(lastShard, k.IntID())
+		cns.ShardId = k.IntID()
+		counternamesShard = append(counternamesShard, cns)
+	}
+	c.Infof("read all names  %#v", counternamesShard)
+	return counternamesShard
+}
+
 //getting all Counter names, also from past
 //counter names are cached into memcache and stored in datastore
 //datastore is main memory over all instances of app (appengine could start couple of instanzes)
@@ -58,33 +79,28 @@ func getAllCounterNames(c appengine.Context) []string {
 	c.Infof("read names from cache %#v", counternames)
 
 	if err == memcache.ErrCacheMiss {
-		q := datastore.NewQuery(counters_name)
-		for t := q.Run(c); ; {
-			var cns counterNameShard
-			k, err := t.Next(&cns)
-			c.Infof("read cns %#v", cns)
-			if err == datastore.Done {
-				break
-			}
-			if err != nil {
-				c.Errorf("load counters - datastore.QueryRun(%#v) %s ", q, err)
-			}
+		for _, cns := range getAllCounterNamesShard(c) {
 			counternames = append(counternames, cns.Names...)
-			lastShard = maxInt(lastShard, k.IntID())
+			lastShard = maxInt(lastShard, cns.ShardId)
 		}
 		// add counter names to cache for faster read for next time check if there are new once
-		counterscache := &memcache.Item{
-			Key:        counters_name,
-			Object:     counternames,
-			Expiration: oneWeek,
-		}
-		c.Infof("put counter names to MemCache")
-		if err := memcache.JSON.Set(c, counterscache); err != nil {
-			c.Errorf("put counter names to MemCache - memcache.Set(%#v) %s ", counternames, err)
-		}
+		storeCounterNamesInMemcache(c, counternames)
+
 	}
 	c.Infof("read all names  %#v", counternames)
 	return counternames
+}
+
+func storeCounterNamesInMemcache(c appengine.Context, counternames []string) {
+	counterscache := &memcache.Item{
+		Key:        counters_name,
+		Object:     counternames,
+		Expiration: oneWeek,
+	}
+	c.Infof("put counter names to MemCache")
+	if err := memcache.JSON.Set(c, counterscache); err != nil {
+		c.Errorf("put counter names to MemCache - memcache.Set(%#v) %s ", counternames, err)
+	}
 }
 
 //check if entry for counter names exisits, if not create a fresh new
@@ -158,16 +174,65 @@ func addCounterNames(c appengine.Context, names []string) int {
 	}
 
 	// add new counter names to cache for faster read for next time check if there are new once
-	counterscache := &memcache.Item{
-		Key:        counters_name,
-		Object:     counters,
-		Expiration: oneWeek,
-	}
-	c.Infof("put counter names to MemCache")
-	if err := memcache.JSON.Set(c, counterscache); err != nil {
-		c.Errorf("put counter names to MemCache - memcache.Set(%#v) %s ", counters, err)
-	}
+	storeCounterNamesInMemcache(c, counters)
 	return result
+}
+
+//removes an elemet from given slice
+func remove(mainslice []string) func(elm string) ([]string, bool) {
+	slice := mainslice
+	return func(elm string) ([]string, bool) {
+		newSlice := make([]string, 0, len(slice))
+		var removed bool
+		for _, e := range slice {
+			if e != elm {
+				newSlice = append(newSlice, e)
+			} else {
+				removed = true
+			}
+		}
+		slice = newSlice
+		return newSlice, removed
+	}
+}
+
+//deletes a counter
+func deleteCounter(c appengine.Context, name string) {
+	c.Infof("deleteCounter - deleting counter: %v", name)
+	allcounters := getAllCounterNames(c)
+	newCounters, del := remove(allcounters)(name)
+	if del {
+		storeCounterNamesInMemcache(c, newCounters)
+		for _, cns := range getAllCounterNamesShard(c) {
+			for _, counter := range cns.Names {
+				if name == counter {
+
+					_ = datastore.RunInTransaction(c, func(c appengine.Context) error {
+						//read current shard to recheck of name is still new, (could be added by an other instance in the meanwhile)
+						key := datastore.NewKey(c, counters_name, "", cns.ShardId, nil)
+						var newcns counterNameShard
+						err := datastore.Get(c, key, &newcns)
+						if err != nil && err != datastore.ErrNoSuchEntity {
+							c.Errorf("deleteCounter - load counterNamesShard - datastore.Get(%#v) %s ", key, err)
+							return err
+						} else {
+							var rem bool
+							newcns.Names, rem = remove(newcns.Names)(name)
+							if rem {
+								_, err = datastore.Put(c, key, &newcns)
+								c.Infof("deleteCounter - put new counterNamesShard to Datastore, removed counter: %v", name)
+								if err != nil {
+									c.Errorf("deleteCounter - update counterNamesShard - datastore.Put(%#v) %s ", newcns, err)
+									return err
+								}
+							}
+						}
+						return err
+					}, nil)
+				}
+			}
+		}
+	}
 }
 
 // calc current minute
@@ -235,7 +300,7 @@ func incrBatch(dc appengine.Context, counters map[string]int64) {
 		}
 	}
 	if len(newCounters) > 0 {
-		allcounters = getAllCounterNames(c)
+		allcounters := getAllCounterNames(c)
 
 		var newCounterNames = make([]string, 0, 5)
 

@@ -30,7 +30,7 @@ const (
 
 //harvest stored counters
 //if last_time is not set try to harvest counters from last hour
-func Harvest(c appengine.Context, sLastHarvestTime string, prodCall bool) []byte {
+func harvest(c appengine.Context, sLastHarvestTime string, prodCall bool) []byte {
 	startTime := time.Now()
 	//check if there could be lost counters since last harvest
 	all_data_inaccurate := wasDataLost(c, true)
@@ -56,7 +56,6 @@ func Harvest(c appengine.Context, sLastHarvestTime string, prodCall bool) []byte
 	c.Infof("slot is: %v", slot)
 	for slot <= currentTime {
 		sslot := strconv.FormatInt(slot, 10)
-		//c.Infof("sslot is: " + sslot)
 		items, _ := memcache.GetMulti(c, cmNames(sslot))
 		for key, item := range items {
 			buf := bytes.NewBuffer(item.Value)

@@ -15,14 +15,6 @@ import (
 
 const twoDays time.Duration = time.Hour * 24 * 2
 
-func init() {
-	//TODO remove test later
-	http.HandleFunc("/prodeagle/testing/batch/commit/", testComitBatchCounter)
-	http.HandleFunc("/prodeagle/testing/batch/", testBatchCounter)
-	http.HandleFunc("/prodeagle/testing/", testCounter)
-	http.HandleFunc("/prodeagle/", Dispatch)
-}
-
 const prodeagleUrl string = "https://prod-eagle.appspot.com/auth/?site=%v.appspot.com&auth=%v&%v=%v"
 const prodeagleAuthUrl string = "https://prod-eagle.appspot.com/auth/?site=%v.appspot.com&auth=%v"
 
@@ -41,6 +33,7 @@ func Dispatch(w http.ResponseWriter, r *http.Request) {
 		appId = strings.Split(appId, ":")[1]
 	}
 
+	//check if a new user should be added
 	admin := r.FormValue("administrator")
 	viewer := r.FormValue("viewer")
 
@@ -49,26 +42,35 @@ func Dispatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	//check if call made from prodeagle app, or a app administrator
 	var isadmin bool
 	prod := isProdeagle(&appId, c, r)
 	if !prod {
 		isadmin = isAdmin(c, w, r)
 	}
 
+	//if prodeagle or admin call, do harvest counters
 	c.Debugf("admin: %v prod: %v", isadmin, prod)
 	if isadmin || prod {
+		delCounter := r.FormValue("delete_counter")
+		if delCounter != "" {
+			deleteCounter(c, delCounter)
+			return
+		}
 		prodcall := r.FormValue("production_call")
 		sLastHarvestTime := r.FormValue("last_time")
 		isProdCall := prodcall == "1"
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-		w.Write(Harvest(c, sLastHarvestTime, isProdCall))
+		w.Write(harvest(c, sLastHarvestTime, isProdCall))
 		return
 	}
-	c.Errorf("Dispatch -unknown request %s ", r.URL)
+	//note a unknown request
+	c.Warningf("Dispatch -unknown request %s ", r.URL)
 }
 
+//a prodeagle request will send a auth parameter to verify
 func isProdeagle(appId *string, c appengine.Context, r *http.Request) bool {
-	auth := r.FormValue("auth")
+	auth := r.PostFormValue("auth")
 	if auth != "" {
 		secret := getAuth(appId, auth, c, r)
 		if secret == auth {
@@ -78,6 +80,8 @@ func isProdeagle(appId *string, c appengine.Context, r *http.Request) bool {
 	return false
 }
 
+// check if request to app is made from an app admin, if not notify the user
+// method is call when a new user is added on prodeagle, prodeagle will redirect the user to app
 func isAdmin(c appengine.Context, w http.ResponseWriter, r *http.Request) bool {
 	u := user.Current(c)
 	if u == nil {
@@ -98,6 +102,7 @@ func isAdmin(c appengine.Context, w http.ResponseWriter, r *http.Request) bool {
 	return false
 }
 
+//store new user authentication and redirect back to prodegale with stored authentication
 func addUser(appId *string, c appengine.Context, w http.ResponseWriter, r *http.Request) {
 	if isAdmin(c, w, r) {
 		email := r.FormValue("administrator")
@@ -123,6 +128,8 @@ type prodeagleAuth struct {
 	Secret string
 }
 
+//verify auth ot create/update an exsiting, create will only happen if a new user should be added
+//after creatin auth will be verifyed by request to prodeagle
 func getAuth(appId *string, updateAuth string, c appengine.Context, r *http.Request) string {
 	prodauth := new(prodeagleAuth)
 	var auth string
@@ -139,12 +146,14 @@ func getAuth(appId *string, updateAuth string, c appengine.Context, r *http.Requ
 	c.Debugf("getAuth - auth: %v updateAuth: %v", auth, updateAuth)
 	if updateAuth != "" && (auth == "" || auth != updateAuth) {
 		client := urlfetch.Client(c)
+		//make verify call to prodeagle
 		url := fmt.Sprintf(prodeagleAuthUrl, *appId, updateAuth)
 		resp, ferr := client.Get(url)
 		if ferr != nil {
 			c.Errorf("getAuth error %v", ferr)
 			return ""
 		}
+		//check verification result
 		c.Debugf("getAuth - status: %v", resp.Status)
 		if resp.Status == "200 OK" {
 			defer resp.Body.Close()
@@ -163,6 +172,7 @@ func getAuth(appId *string, updateAuth string, c appengine.Context, r *http.Requ
 	return ""
 }
 
+//store a verifed auth in datastore and memcached
 func storeAuth(auth prodeagleAuth, c appengine.Context) {
 	key := datastore.NewKey(c, "prodeagle_key", authKeyId, 0, nil)
 	_, err := datastore.Put(c, key, &auth)
@@ -180,32 +190,4 @@ func storeAuth(auth prodeagleAuth, c appengine.Context) {
 	if err := memcache.Set(c, cache); err != nil {
 		c.Errorf("storeAuth - memcache.Set(%#v) %s ", auth, err)
 	}
-}
-
-//TODO remove test later
-func testCounter(w http.ResponseWriter, r *http.Request) {
-	c := appengine.NewContext(r)
-	name := r.FormValue("name")
-	//IncrDelta(c, name, 5)
-	Incr(c, name)
-	fmt.Fprint(w, "counter written")
-}
-
-var b *Batch
-
-//TODO remove test later
-func testBatchCounter(w http.ResponseWriter, r *http.Request) {
-	c := appengine.NewContext(r)
-	name := r.FormValue("name")
-	if nil == b {
-		b = NewBatch(c)
-	}
-	b.Incr(name)
-	fmt.Fprint(w, "batch counter written")
-}
-
-//TODO remove test later
-func testComitBatchCounter(w http.ResponseWriter, r *http.Request) {
-	b.Commit()
-	fmt.Fprint(w, "batch counter commited written")
 }
