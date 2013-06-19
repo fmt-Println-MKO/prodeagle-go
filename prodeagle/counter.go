@@ -1,3 +1,5 @@
+// prodeagle-go von Matthias Koch steht unter einer Creative Commons Namensnennung - Weitergabe unter gleichen Bedingungen 3.0 Unported Lizenz.
+// Beruht auf einem Inhalt unter https://github.com/fmt-Println-MKO/prodeagle-go.
 // Licensed: Attribution-ShareAlike 3.0 Unported (CC BY-SA 3.0)
 // http://creativecommons.org/licenses/by-sa/3.0/
 
