@@ -1,5 +1,5 @@
 application: prodeagle-go
-version: 1
+version: 2
 runtime: go
 api_version: go1
 
@@ -8,4 +8,3 @@ handlers:
 
 - url: /.*
   script: _go_app
-  

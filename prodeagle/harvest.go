@@ -6,10 +6,11 @@
 package prodeagle
 
 import (
-	"appengine"
-	"appengine/memcache"
 	"bytes"
 	"encoding/json"
+	"golang.org/x/net/context"
+	//"google.golang.org/appengine"
+	"google.golang.org/appengine/memcache"
 	"strconv"
 	"strings"
 	"time"
@@ -35,7 +36,7 @@ const (
 
 //harvest stored counters
 //if last_time is not set try to harvest counters from last hour
-func harvest(c appengine.Context, sLastHarvestTime string, prodCall bool) []byte {
+func harvest(c context.Context, sLastHarvestTime string, prodCall bool) []byte {
 	startTime := time.Now()
 	//check if there could be lost counters since last harvest
 	all_data_inaccurate := wasDataLost(c, true)
@@ -94,7 +95,7 @@ func harvest(c appengine.Context, sLastHarvestTime string, prodCall bool) []byte
 	return b
 }
 
-func wasDataLost(c appengine.Context, reset bool) bool {
+func wasDataLost(c context.Context, reset bool) bool {
 
 	keys := make([]string, max_memcache_server)
 	for i := range keys {

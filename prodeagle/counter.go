@@ -6,9 +6,10 @@
 package prodeagle
 
 import (
-	"appengine"
-	"appengine/datastore"
-	"appengine/memcache"
+	"golang.org/x/net/context"
+	"google.golang.org/appengine"
+	"google.golang.org/appengine/datastore"
+	"google.golang.org/appengine/memcache"
 	"strconv"
 	"time"
 )
@@ -51,7 +52,7 @@ func maxInt(a, b int64) int64 {
 }
 
 //read all countersNameShards from db
-func getAllCounterNamesShard(c appengine.Context) []counterNameShard {
+func getAllCounterNamesShard(c context.Context) []counterNameShard {
 	counternamesShard := make([]counterNameShard, 0, 50)
 	q := datastore.NewQuery(counters_name)
 	for t := q.Run(c); ; {
@@ -79,7 +80,7 @@ func getAllCounterNamesShard(c appengine.Context) []counterNameShard {
 //getting all Counter names, also from past
 //counter names are cached into memcache and stored in datastore
 //datastore is main memory over all instances of app (appengine could start couple of instanzes)
-func getAllCounterNames(c appengine.Context) []string {
+func getAllCounterNames(c context.Context) []string {
 	counternames := make([]string, 0, 50)
 	_, err := memcache.JSON.Get(c, counters_name, &counternames)
 	if err != nil && err != memcache.ErrCacheMiss {
@@ -104,7 +105,7 @@ func getAllCounterNames(c appengine.Context) []string {
 	return counternames
 }
 
-func storeCounterNamesInMemcache(c appengine.Context, counternames []string) {
+func storeCounterNamesInMemcache(c context.Context, counternames []string) {
 	counterscache := &memcache.Item{
 		Key:        counters_name,
 		Object:     counternames,
@@ -119,9 +120,9 @@ func storeCounterNamesInMemcache(c appengine.Context, counternames []string) {
 }
 
 //check if entry for counter names exisits, if not create a fresh new
-//counter names are sharded because 
+//counter names are sharded because
 // there is a limit in max counter names (maxsize per field) on appengine
-func createCounterNamesShardIfNew(c appengine.Context, shard int64) {
+func createCounterNamesShardIfNew(c context.Context, shard int64) {
 	key := datastore.NewKey(c, counters_name, "", shard, nil)
 	cns := new(counterNameShard)
 
@@ -137,8 +138,8 @@ func createCounterNamesShardIfNew(c appengine.Context, shard int64) {
 	}
 }
 
-// adding new counter names to current CounterNamesShard 
-func addCounterNames(c appengine.Context, names []string) int {
+// adding new counter names to current CounterNamesShard
+func addCounterNames(c context.Context, names []string) int {
 
 	key := datastore.NewKey(c, counters_name, "", lastShard, nil)
 	var cns counterNameShard
@@ -218,7 +219,7 @@ func remove(mainslice []string) func(elm string) ([]string, bool) {
 }
 
 //deletes a counter
-func deleteCounter(c appengine.Context, name string) {
+func deleteCounter(c context.Context, name string) {
 	c.Infof("deleteCounter - deleting counter: %v", name)
 	allcounters := getAllCounterNames(c)
 	newCounters, del := remove(allcounters)(name)
@@ -264,23 +265,23 @@ func calcMinute(epoch int64) int64 {
 }
 
 //increments the counter *name" by one
-func Incr(c appengine.Context, name string) {
+func Incr(c context.Context, name string) {
 	IncrDelta(c, name, 1)
 }
 
 //increments the counter *name" by given value
-func IncrDelta(c appengine.Context, name string, value int64) {
+func IncrDelta(c context.Context, name string, value int64) {
 	incrBatch(c, map[string]int64{name: value})
 }
 
 //a counting Batch to count many counters in batchmode (not one by one)
 type Batch struct {
 	counts map[string]int64
-	c      appengine.Context
+	c      context.Context
 }
 
 //create a new Batch for counting
-func NewBatch(c appengine.Context) *Batch {
+func NewBatch(c context.Context) *Batch {
 	return &Batch{make(map[string]int64), c}
 }
 
@@ -309,7 +310,7 @@ func (b *Batch) Commit() {
 //increments given counters by given values
 //checks if new counters where added, if so, add them to CounterNames
 //for faster reading /writing counter values are stored in memcached
-func incrBatch(dc appengine.Context, counters map[string]int64) {
+func incrBatch(dc context.Context, counters map[string]int64) {
 	c, _ := appengine.Namespace(dc, namespace)
 	minute := strconv.FormatInt(calcMinute(time.Now().Unix()), 10)
 	newCounters := make([]string, 0, 10)
@@ -344,7 +345,7 @@ func incrBatch(dc appengine.Context, counters map[string]int64) {
 				newCounterNames = append(newCounterNames, n)
 			}
 		}
-		//if there where new counters, check if there is already a ConterNamesShard, of not create new one. 
+		//if there where new counters, check if there is already a ConterNamesShard, of not create new one.
 		//add new counter names to Datastore
 		if len(newCounterNames) > 0 {
 			if lastShard == 0 {

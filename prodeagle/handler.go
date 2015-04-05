@@ -6,12 +6,13 @@
 package prodeagle
 
 import (
-	"appengine"
-	"appengine/datastore"
-	"appengine/memcache"
-	"appengine/urlfetch"
-	"appengine/user"
 	"fmt"
+	"golang.org/x/net/context"
+	"google.golang.org/appengine"
+	"google.golang.org/appengine/datastore"
+	"google.golang.org/appengine/memcache"
+	"google.golang.org/appengine/urlfetch"
+	"google.golang.org/appengine/user"
 	"io/ioutil"
 	"net/http"
 	"strings"
@@ -80,7 +81,7 @@ func Dispatch(w http.ResponseWriter, r *http.Request) {
 }
 
 //a prodeagle request will send a auth parameter to verify
-func isProdeagle(appId *string, c appengine.Context, r *http.Request) bool {
+func isProdeagle(appId *string, c context.Context, r *http.Request) bool {
 	auth := r.PostFormValue("auth")
 	if auth != "" {
 		secret := getAuth(appId, auth, c, r)
@@ -93,7 +94,7 @@ func isProdeagle(appId *string, c appengine.Context, r *http.Request) bool {
 
 // check if request to app is made from an app admin, if not notify the user
 // method is call when a new user is added on prodeagle, prodeagle will redirect the user to app
-func isAdmin(c appengine.Context, w http.ResponseWriter, r *http.Request) bool {
+func isAdmin(c context.Context, w http.ResponseWriter, r *http.Request) bool {
 	u := user.Current(c)
 	if u == nil {
 		url, err := user.LoginURL(c, r.URL.String())
@@ -114,7 +115,7 @@ func isAdmin(c appengine.Context, w http.ResponseWriter, r *http.Request) bool {
 }
 
 //store new user authentication and redirect back to prodegale with stored authentication
-func addUser(appId *string, c appengine.Context, w http.ResponseWriter, r *http.Request) {
+func addUser(appId *string, c context.Context, w http.ResponseWriter, r *http.Request) {
 	if isAdmin(c, w, r) {
 		email := r.FormValue("administrator")
 		rtype := "administrator"
@@ -141,7 +142,7 @@ type prodeagleAuth struct {
 
 //verify auth ot create/update an exsiting, create will only happen if a new user should be added
 //after creatin auth will be verifyed by request to prodeagle
-func getAuth(appId *string, updateAuth string, c appengine.Context, r *http.Request) string {
+func getAuth(appId *string, updateAuth string, c context.Context, r *http.Request) string {
 	prodauth := new(prodeagleAuth)
 	var auth string
 	cache, err := memcache.Get(c, authKeyId)
@@ -190,7 +191,7 @@ func getAuth(appId *string, updateAuth string, c appengine.Context, r *http.Requ
 }
 
 //store a verifed auth in datastore and memcached
-func storeAuth(auth prodeagleAuth, c appengine.Context) {
+func storeAuth(auth prodeagleAuth, c context.Context) {
 	key := datastore.NewKey(c, "prodeagle_key", authKeyId, 0, nil)
 	_, err := datastore.Put(c, key, &auth)
 	if IsDebugEnabled {
